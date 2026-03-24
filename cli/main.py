@@ -615,7 +615,7 @@ def profile_publish():
         raise typer.Exit(code=1)
 
     import uuid
-    d_tag = str(uuid.uuid4())
+    d_tag = f"profile_{identity['pubkey']}"
 
     event = build_event(
         kind=KIND_APP_DATA,

@@ -112,3 +112,35 @@ class TestSubmit:
         result = runner.invoke(app, ["submit", "--help"])
         assert result.exit_code == 0
         assert "JOB_ID" in result.output
+
+
+class TestApplicationsList:
+    def test_applications_list_requires_login(self, cli_home):
+        """list without login shows error."""
+        result = runner.invoke(app, ["applications", "list"])
+        assert result.exit_code != 0
+        assert "identity" in result.stdout.lower() or "login" in result.stdout.lower()
+
+    def test_applications_list_empty(self, cli_home):
+        """list with no applications shows empty message."""
+        runner.invoke(app, ["login", "--key", "aa" * 32])
+        result = runner.invoke(app, ["applications", "list"])
+        assert result.exit_code == 0
+        assert "no applications" in result.stdout.lower() or "not found" in result.stdout.lower()
+
+    def test_applications_list_shows_submitted(self, cli_home):
+        """list shows submitted applications."""
+        runner.invoke(app, ["login", "--key", "aa" * 32])
+        # Create job and application directly in DB
+        from cli.storage import Storage
+        from shared.crypto import derive_pub
+        s = Storage(str(cli_home / "agentboss.db"))
+        s.init_db()
+        applicant_pubkey = derive_pub("aa" * 32)
+        s.upsert_job("job1", "d1", "emp1", 1, 101, '{"title":"Dev","company":"Co","description":""}', 1000)
+        s.upsert_application("app1", "app_job1_1000", "job1", "emp1", applicant_pubkey, "I'm interested", "pending", created_at=1000)
+        s.close()
+
+        result = runner.invoke(app, ["applications", "list"])
+        assert result.exit_code == 0
+        assert "Dev" in result.stdout or "Co" in result.stdout

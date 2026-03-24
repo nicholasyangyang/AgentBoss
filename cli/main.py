@@ -23,9 +23,11 @@ app = typer.Typer(help="AgentBoss: Decentralized Job Recruitment CLI")
 regions_app = typer.Typer(help="Region mapping management")
 config_app = typer.Typer(help="Configuration management")
 profile_app = typer.Typer(help="User profile management")
+applications_app = typer.Typer(help="Manage job applications")
 app.add_typer(regions_app, name="regions")
 app.add_typer(config_app, name="config")
 app.add_typer(profile_app, name="profile")
+app.add_typer(applications_app, name="applications")
 
 
 def _home() -> Path:
@@ -796,4 +798,44 @@ def profile_fetch(
             await relay.close()
 
     asyncio.run(_fetch())
+    storage.close()
+
+
+# ── Applications ──────────────────────────────────────────────────────
+
+@applications_app.command(name="list")
+def applications_list(
+    status: Optional[str] = typer.Option(None, "--status", help="Filter by status: pending, accepted, rejected"),
+):
+    """List your job applications."""
+    identity = _load_identity()
+    if not identity:
+        typer.echo("No identity. Run: agentboss login --key <nsec>")
+        raise typer.Exit(code=1)
+
+    storage = _get_storage()
+    resolver = RegionResolver(storage)
+
+    apps = storage.list_applications(
+        applicant_pubkey=identity["pubkey"],
+        status=status,
+    )
+
+    if not apps:
+        typer.echo("No applications found.")
+        storage.close()
+        return
+
+    for app_entry in apps:
+        job = storage.get_job(app_entry["job_id"])
+        job_title = "(unknown job)"
+        if job:
+            try:
+                job_content = json.loads(job["content"])
+                job_title = job_content.get("title", "(no title)")
+            except (json.JSONDecodeError, KeyError):
+                job_title = "(unknown job)"
+        status_emoji = {"pending": "⏳", "accepted": "✅", "rejected": "❌"}.get(app_entry["status"], "?")
+        typer.echo(f"{status_emoji} {job_title} | {app_entry['status']} | {app_entry['created_at']}")
+
     storage.close()

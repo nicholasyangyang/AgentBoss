@@ -49,6 +49,20 @@ class Storage:
                 created_at INTEGER NOT NULL,
                 received_at INTEGER NOT NULL DEFAULT 0
             );
+            CREATE TABLE IF NOT EXISTS applications (
+                event_id TEXT PRIMARY KEY,
+                d_tag TEXT NOT NULL,
+                job_id TEXT NOT NULL,
+                employer_pubkey TEXT NOT NULL,
+                applicant_pubkey TEXT NOT NULL,
+                message TEXT,
+                status TEXT DEFAULT 'pending',
+                response_message TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER DEFAULT (unixepoch('now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_applications_job_id ON applications(job_id);
+            CREATE INDEX IF NOT EXISTS idx_applications_applicant ON applications(applicant_pubkey);
         """)
         self._conn.commit()
 
@@ -294,3 +308,82 @@ class Storage:
         """Delete profile by pubkey."""
         self._conn.execute("DELETE FROM profiles WHERE pubkey = ?", (pubkey,))
         self._conn.commit()
+
+    # ── Applications ──────────────────────────────────────────────────
+
+    def upsert_application(
+        self,
+        event_id: str,
+        d_tag: str,
+        job_id: str,
+        employer_pubkey: str,
+        applicant_pubkey: str,
+        message: str | None,
+        status: str = "pending",
+        response_message: str | None = None,
+        created_at: int | None = None,
+    ):
+        """Insert or update an application record."""
+        if created_at is None:
+            created_at = int(time.time())
+        self._conn.execute(
+            """INSERT OR REPLACE INTO applications
+               (event_id, d_tag, job_id, employer_pubkey, applicant_pubkey, message, status, response_message, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch('now'))""",
+            (event_id, d_tag, job_id, employer_pubkey, applicant_pubkey, message, status, response_message, created_at),
+        )
+        self._conn.commit()
+
+    def get_application(self, event_id: str) -> dict | None:
+        """Get application by event_id."""
+        row = self._conn.execute(
+            "SELECT * FROM applications WHERE event_id = ?", (event_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
+    def list_applications(
+        self,
+        applicant_pubkey: str | None = None,
+        employer_pubkey: str | None = None,
+        job_id: str | None = None,
+        status: str | None = None,
+    ) -> list[dict]:
+        """List applications with optional filters."""
+        query = "SELECT * FROM applications WHERE 1=1"
+        params: list = []
+        if applicant_pubkey:
+            query += " AND applicant_pubkey = ?"
+            params.append(applicant_pubkey)
+        if employer_pubkey:
+            query += " AND employer_pubkey = ?"
+            params.append(employer_pubkey)
+        if job_id:
+            query += " AND job_id = ?"
+            params.append(job_id)
+        if status:
+            query += " AND status = ?"
+            params.append(status)
+        query += " ORDER BY created_at DESC"
+        rows = self._conn.execute(query, params).fetchall()
+        return [dict(r) for r in rows]
+
+    def update_application_status(
+        self,
+        event_id: str,
+        status: str,
+        response_message: str | None = None,
+    ):
+        """Update application status (accepted/rejected)."""
+        self._conn.execute(
+            "UPDATE applications SET status = ?, response_message = ?, updated_at = unixepoch('now') WHERE event_id = ?",
+            (status, response_message, event_id),
+        )
+        self._conn.commit()
+
+    def has_application(self, job_id: str, applicant_pubkey: str) -> bool:
+        """Check if an application exists for this job and applicant."""
+        row = self._conn.execute(
+            "SELECT 1 FROM applications WHERE job_id = ? AND applicant_pubkey = ?",
+            (job_id, applicant_pubkey),
+        ).fetchone()
+        return row is not None

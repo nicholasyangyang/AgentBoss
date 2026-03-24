@@ -353,3 +353,60 @@ class TestProfiles:
         db.delete_profile("aa" * 32)
         profile = db.get_profile("aa" * 32)
         assert profile is None
+
+
+class TestApplications:
+    """Tests for job applications storage."""
+
+    def test_applications_table_exists(self, db):
+        """applications table exists after init_db."""
+        assert "applications" in db.list_tables()
+
+    def test_upsert_application(self, db):
+        """Can insert and retrieve an application."""
+        db.upsert_application(
+            event_id="app1",
+            d_tag="app_job1_1000",
+            job_id="job1",
+            employer_pubkey="emp1",
+            applicant_pubkey="app1",
+            message="I'm interested",
+            status="pending",
+            created_at=1000,
+        )
+        app = db.get_application("app1")
+        assert app is not None
+        assert app["job_id"] == "job1"
+        assert app["status"] == "pending"
+
+    def test_list_applications_filter(self, db):
+        """Can filter applications by applicant and status."""
+        db.upsert_application("a1", "d1", "job1", "emp1", "app1", "msg", "pending", created_at=1000)
+        db.upsert_application("a2", "d2", "job1", "emp1", "app1", "msg", "accepted", created_at=1001)
+        db.upsert_application("a3", "d3", "job2", "emp1", "app2", "msg", "pending", created_at=1002)
+
+        # Filter by applicant
+        apps = db.list_applications(applicant_pubkey="app1")
+        assert len(apps) == 2
+
+        # Filter by status
+        apps = db.list_applications(status="pending")
+        assert len(apps) == 2
+
+        # Filter by job_id
+        apps = db.list_applications(job_id="job1")
+        assert len(apps) == 2
+
+    def test_has_application(self, db):
+        """Can check if application exists for job+applicant."""
+        db.upsert_application("a1", "app_job1_1000", "job1", "emp1", "app1", "msg", "pending", created_at=1000)
+        assert db.has_application("job1", "app1") is True
+        assert db.has_application("job2", "app1") is False
+
+    def test_update_application_status(self, db):
+        """Can update application status and response message."""
+        db.upsert_application("a1", "d1", "job1", "emp1", "app1", "msg", "pending", created_at=1000)
+        db.update_application_status("a1", "accepted", "Welcome aboard!")
+        app = db.get_application("a1")
+        assert app["status"] == "accepted"
+        assert app["response_message"] == "Welcome aboard!"

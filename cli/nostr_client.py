@@ -4,6 +4,9 @@ import json
 import asyncio
 import aiohttp
 
+from shared.crypto import nip04_encrypt, derive_pub
+from shared.event import build_event
+
 
 def build_req_filter(
     sub_id: str,
@@ -97,3 +100,25 @@ class NostrRelay:
 
     async def unsubscribe(self, sub_id: str):
         await self.send(build_close_message(sub_id))
+
+    async def send_dm(self, sender_privkey: str, recipient_pubkey: str, plaintext: str) -> dict:
+        """Send an encrypted NIP-04 DM to a recipient.
+
+        Args:
+            sender_privkey: Sender's private key hex
+            recipient_pubkey: Recipient's public key hex
+            plaintext: Message to encrypt
+
+        Returns:
+            Result dict with event_id, accepted, message
+        """
+        ciphertext = nip04_encrypt(plaintext, sender_privkey, recipient_pubkey)
+        sender_pubkey = derive_pub(sender_privkey)
+        event = build_event(
+            kind=4,
+            content=ciphertext,
+            privkey=sender_privkey,
+            pubkey=sender_pubkey,
+            tags=[["p", recipient_pubkey]],
+        )
+        return await self.publish_event(event)

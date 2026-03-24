@@ -1,12 +1,14 @@
 import json
 import pytest
+from unittest.mock import AsyncMock, patch
 from cli.nostr_client import (
     build_req_filter,
     build_event_message,
     build_close_message,
     parse_relay_message,
+    NostrRelay,
 )
-from shared.crypto import gen_keys
+from shared.crypto import gen_keys, nip04_encrypt
 from shared.event import build_event
 
 
@@ -89,3 +91,31 @@ class TestParseRelayMessage:
         raw = json.dumps(["UNKNOWN", "data"])
         msg_type, data = parse_relay_message(raw)
         assert msg_type == "UNKNOWN"
+
+
+class TestSendDM:
+    @pytest.mark.asyncio
+    async def test_send_dm_builds_encrypted_kind4_event(self):
+        """send_dm encrypts content and sends a kind:4 DM event."""
+        alice_priv, alice_pub = gen_keys()
+        bob_priv, bob_pub = gen_keys()
+
+        relay = NostrRelay("wss://example.com")
+        relay.publish_event = AsyncMock(return_value={"event_id": "test123", "accepted": True, "message": ""})
+
+        result = await relay.send_dm(alice_priv, bob_pub, "Hello, Bob!")
+
+        # Verify publish_event was called with a kind:4 event
+        published_event = relay.publish_event.call_args[0][0]
+        assert published_event["kind"] == 4
+        assert published_event["pubkey"] == alice_pub
+        assert published_event["tags"] == [["p", bob_pub]]
+
+        # Content should be NIP-04 encrypted (Base64)
+        import base64
+        combined = base64.b64decode(published_event["content"])
+        assert len(combined) > 48  # 32 (ephem_pub_x) + 16 (iv) + min ciphertext
+
+        # Verify result
+        assert result["event_id"] == "test123"
+        assert result["accepted"] is True

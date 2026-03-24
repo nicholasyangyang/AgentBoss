@@ -144,3 +144,41 @@ class TestApplicationsList:
         result = runner.invoke(app, ["applications", "list"])
         assert result.exit_code == 0
         assert "Dev" in result.stdout or "Co" in result.stdout
+
+
+class TestApplicationsRespond:
+    def test_applications_respond_requires_login(self, cli_home):
+        """respond without login shows error."""
+        result = runner.invoke(app, ["applications", "respond", "app1", "--accept"])
+        assert result.exit_code != 0
+        assert "identity" in result.stdout.lower() or "login" in result.stdout.lower()
+
+    def test_applications_respond_requires_accept_or_reject(self, cli_home):
+        """respond without --accept or --reject shows error."""
+        runner.invoke(app, ["login", "--key", "aa" * 32])
+        result = runner.invoke(app, ["applications", "respond", "app1"])
+        assert result.exit_code != 0
+        assert "accept" in result.stdout.lower() or "reject" in result.stdout.lower()
+
+    def test_applications_respond_not_employer(self, cli_home):
+        """respond fails if not the employer of the job."""
+        from cli.storage import Storage
+        from shared.crypto import derive_pub
+        runner.invoke(app, ["login", "--key", "aa" * 32])
+        s = Storage(str(cli_home / "agentboss.db"))
+        s.init_db()
+        employer_priv = "bb" * 32
+        employer_pub = derive_pub(employer_priv)
+        s.upsert_job("job1", "d1", employer_pub, 1, 101, '{"title":"Dev","company":"Co","description":""}', 1000)
+        s.upsert_application("app1", "app_job1_1000", "job1", employer_pub, "app1_pub", "Interested", "pending", created_at=1000)
+        s.close()
+        result = runner.invoke(app, ["applications", "respond", "app1", "--accept"])
+        assert result.exit_code != 0
+        assert "employer" in result.stdout.lower() or "publisher" in result.stdout.lower()
+
+    def test_applications_respond_unknown_app(self, cli_home):
+        """respond fails for unknown application."""
+        runner.invoke(app, ["login", "--key", "aa" * 32])
+        result = runner.invoke(app, ["applications", "respond", "nonexistent", "--accept"])
+        assert result.exit_code != 0
+        assert "not found" in result.stdout.lower()

@@ -839,3 +839,89 @@ def applications_list(
         typer.echo(f"{status_emoji} {job_title} | {app_entry['status']} | {app_entry['created_at']}")
 
     storage.close()
+
+
+@applications_app.command(name="respond")
+def applications_respond(
+    app_id: str = typer.Argument(..., help="Application event ID"),
+    accept: bool = typer.Option(False, "--accept", is_flag=True, help="Accept the application"),
+    reject: bool = typer.Option(False, "--reject", is_flag=True, help="Reject the application"),
+    reason: Optional[str] = typer.Option(None, "--reason", help="Reason or feedback"),
+):
+    """Respond to a job application (employer only)."""
+    if not (accept or reject):
+        typer.echo("Use --accept or --reject")
+        raise typer.Exit(code=1)
+
+    identity = _load_identity()
+    if not identity:
+        typer.echo("No identity. Run: agentboss login --key <nsec>")
+        raise typer.Exit(code=1)
+
+    storage = _get_storage()
+
+    # Get application
+    app_record = storage.get_application(app_id)
+    if not app_record:
+        typer.echo("Application not found.")
+        storage.close()
+        raise typer.Exit(code=1)
+
+    # Verify employer
+    job = storage.get_job(app_record["job_id"])
+    if not job or job["pubkey"] != identity["pubkey"]:
+        typer.echo("Only the job publisher can respond to this application.")
+        storage.close()
+        raise typer.Exit(code=1)
+
+    status = "accepted" if accept else "rejected"
+    response_content = json.dumps({
+        "message": reason or "",
+    })
+
+    # Build response event (kind:31971)
+    event = build_event(
+        kind=KIND_APP_DATA,
+        content=response_content,
+        privkey=identity["privkey"],
+        pubkey=identity["pubkey"],
+        tags=[
+            ["d", app_record["d_tag"]],  # Same d_tag as application = replaceable
+            ["job", app_record["job_id"]],
+            ["status", status],
+            ["t", "application_response"],
+        ],
+    )
+
+    relay_url = storage.get_config("relay", DEFAULT_RELAY)
+
+    async def _respond():
+        relay = NostrRelay(relay_url)
+        try:
+            await relay.connect()
+            result = await relay.publish_event(event)
+            if not result["accepted"]:
+                typer.echo(f"Failed to respond: {result['message']}")
+                return
+
+            # Send DM to applicant
+            dm_content = json.dumps({
+                "type": "application",
+                "job_id": app_record["job_id"],
+                "app_id": app_record["event_id"],
+                "action": status,
+                "message": reason or "",
+            })
+            try:
+                await relay.send_dm(identity["privkey"], app_record["applicant_pubkey"], dm_content)
+            except Exception as e:
+                typer.echo(f"Warning: Could not notify applicant: {e}")
+
+            # Update local status
+            storage.update_application_status(app_record["event_id"], status, reason)
+            typer.echo(f"Application {status}: {app_record['event_id'][:12]}...")
+        finally:
+            await relay.close()
+
+    asyncio.run(_respond())
+    storage.close()

@@ -91,3 +91,24 @@ class TestProfile:
         runner.invoke(app, ["login", "--key", "aa" * 32])
         result = runner.invoke(app, ["profile", "show"])
         assert "No profile set" in result.stdout or result.exit_code != 0
+
+
+class TestSubmit:
+    def test_submit_fails_without_login(self, cli_home):
+        """submit without login shows error."""
+        result = runner.invoke(app, ["submit", "abc123", "--message", "Hello"])
+        assert result.exit_code != 0
+        assert "identity" in result.stdout.lower() or "login" in result.stdout.lower()
+
+    def test_submit_fails_for_unknown_job(self, cli_home):
+        """submit for unknown job shows error."""
+        runner.invoke(app, ["login", "--key", "aa" * 32])
+        result = runner.invoke(app, ["submit", "nonexistent", "--message", "Hello"])
+        assert result.exit_code != 0
+        assert "not found" in result.stdout.lower() or "run" in result.stdout.lower()
+
+    def test_submit_command_exists(self, cli_home):
+        """submit command is registered."""
+        result = runner.invoke(app, ["submit", "--help"])
+        assert result.exit_code == 0
+        assert "JOB_ID" in result.output

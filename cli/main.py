@@ -337,6 +337,107 @@ def apply(job_id: str = typer.Argument(..., help="Job ID (full or prefix)")):
     storage.close()
 
 
+@app.command(name="submit")
+def submit(
+    job_id: str = typer.Argument(..., help="Job ID (full or prefix)"),
+    message: str = typer.Option("", "--message", help="Introduction message"),
+):
+    """Submit an application for a job posting."""
+    identity = _load_identity()
+    if not identity:
+        typer.echo("No identity. Run: agentboss login --key <nsec>")
+        raise typer.Exit(code=1)
+
+    storage = _get_storage()
+
+    # Find job
+    job = storage.get_job(job_id)
+    if not job:
+        # Try prefix match
+        jobs = storage.list_jobs()
+        matches = [j for j in jobs if j["event_id"].startswith(job_id)]
+        if len(matches) == 1:
+            job = matches[0]
+        elif len(matches) > 1:
+            typer.echo("Multiple jobs match prefix. Use full ID.")
+            storage.close()
+            raise typer.Exit(code=1)
+        else:
+            typer.echo("Job not found in local storage. Run `agentboss fetch` first.")
+            storage.close()
+            raise typer.Exit(code=1)
+
+    # Check if already applied
+    if storage.has_application(job["event_id"], identity["pubkey"]):
+        typer.echo("You have already applied to this job.")
+        storage.close()
+        raise typer.Exit(code=1)
+
+    employer_pubkey = job["pubkey"]
+    applicant_privkey = identity["privkey"]
+    applicant_pubkey = identity["pubkey"]
+
+    # Build d_tag: app_<job_id>_<timestamp>
+    import time
+    d_tag = f"app_{job['event_id']}_{int(time.time())}"
+
+    # Build application event (kind:31970)
+    event = build_event(
+        kind=KIND_APP_DATA,
+        content=json.dumps({"message": message}) if message else "{}",
+        privkey=applicant_privkey,
+        pubkey=applicant_pubkey,
+        tags=[
+            ["d", d_tag],
+            ["t", APP_TAG],
+            ["t", "application"],
+        ],
+    )
+
+    relay_url = storage.get_config("relay", DEFAULT_RELAY)
+
+    async def _submit():
+        relay = NostrRelay(relay_url)
+        try:
+            await relay.connect()
+            # Publish application event
+            result = await relay.publish_event(event)
+            if not result["accepted"]:
+                typer.echo(f"Failed to submit: {result['message']}")
+                return
+
+            # Send DM to employer
+            dm_content = json.dumps({
+                "type": "application",
+                "job_id": job["event_id"],
+                "app_id": event["id"],
+                "action": "submit",
+                "message": message or "",
+            })
+            try:
+                await relay.send_dm(applicant_privkey, employer_pubkey, dm_content)
+            except Exception as e:
+                typer.echo(f"Warning: Could not notify employer: {e}")
+
+            # Store locally
+            storage.upsert_application(
+                event_id=event["id"],
+                d_tag=d_tag,
+                job_id=job["event_id"],
+                employer_pubkey=employer_pubkey,
+                applicant_pubkey=applicant_pubkey,
+                message=message,
+                status="pending",
+                created_at=event["created_at"],
+            )
+            typer.echo(f"Application submitted for {job['event_id'][:12]}...")
+        finally:
+            await relay.close()
+
+    asyncio.run(_submit())
+    storage.close()
+
+
 @app.command()
 def status(job_id: str = typer.Argument(..., help="Job ID (full or prefix)")):
     """Show favorited/applied status of a job."""

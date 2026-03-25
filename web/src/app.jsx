@@ -53,11 +53,11 @@ export function App() {
   const handleDeleteConfirm = async (job) => {
     try {
       await deleteJob(job.d_tag, pubkey);
+      markDeleted(job.d_tag);
       showToast(t('toast_deleted'), 'success');
     } catch {
       showToast(t('toast_delete_err'), 'error');
     }
-    markDeleted(job.d_tag);
     setDeleteTarget(null);
   };
 

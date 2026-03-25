@@ -18,7 +18,7 @@ from shared.event import build_event
 from cli.storage import Storage
 from cli.regions import RegionResolver
 from cli.models import parse_job_content
-from cli.nostr_client import NostrRelay
+from cli.nostr_client import NostrRelay, fetch_events_from_relays
 
 app = typer.Typer(help="AgentBoss: Decentralized Job Recruitment CLI")
 regions_app = typer.Typer(help="Region mapping management")
@@ -181,11 +181,11 @@ def fetch(
     province: Optional[str] = typer.Option(None, "--province"),
     city: Optional[str] = typer.Option(None, "--city"),
     limit: int = typer.Option(DEFAULT_MAX_JOBS, "--limit"),
+    federation: Optional[str] = typer.Option(None, "--federation", help="Fetch from a federation by name"),
 ):
     """Fetch job postings from Relay and store locally."""
     storage = _get_storage()
     resolver = RegionResolver(storage)
-    relay_url = storage.get_config("relay", DEFAULT_RELAY)
 
     tags = {"#t": [APP_TAG, JOB_TAG]}
     if province:
@@ -202,6 +202,50 @@ def fetch(
         tags["#city"] = [str(city_code)]
 
     async def _fetch():
+        if federation:
+            # Multi-relay fetch from federation
+            fed = next((f for f in storage.list_federations() if f["name"] == federation), None)
+            if not fed:
+                typer.echo(f"Federation '{federation}' not found. Run: agentboss federation list")
+                raise typer.Exit(code=1)
+            relay_urls = fed["relay_urls"]
+            events = await fetch_events_from_relays(
+                relay_urls=relay_urls,
+                kinds=[KIND_APP_DATA],
+                tags=tags,
+                limit=limit,
+            )
+            count = 0
+            for event in events:
+                pcode = ccode = 0
+                for tag in event.get("tags", []):
+                    if tag[0] == "province":
+                        pcode = int(tag[1])
+                    elif tag[0] == "city":
+                        ccode = int(tag[1])
+                d_tag = ""
+                for tag in event.get("tags", []):
+                    if tag[0] == "d":
+                        d_tag = tag[1]
+                has_job_tag = any(t[0] == "t" and t[1] == JOB_TAG for t in event.get("tags", []))
+                if has_job_tag and d_tag:
+                    storage.upsert_job(
+                        event_id=event["id"],
+                        d_tag=d_tag,
+                        pubkey=event["pubkey"],
+                        province_code=pcode,
+                        city_code=ccode,
+                        content=event["content"],
+                        created_at=event["created_at"],
+                    )
+                    count += 1
+            max_jobs = int(storage.get_config("max-jobs", str(DEFAULT_MAX_JOBS)))
+            storage.evict_oldest(max_jobs)
+            typer.echo(f"Fetched {count} jobs from federation '{federation}'. Total stored: {storage.count_jobs()}")
+            return
+
+        # Single relay fetch (existing behavior)
+        relay_url = storage.get_config("relay", DEFAULT_RELAY)
         relay = NostrRelay(relay_url)
         count = 0
         try:

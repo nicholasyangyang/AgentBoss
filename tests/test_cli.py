@@ -246,3 +246,18 @@ class TestFederationCreate:
         """create command is registered."""
         result = runner.invoke(app, ["federation", "create", "--help"])
         assert result.exit_code == 0
+
+
+class TestFederationFetch:
+    def test_fetch_federation_option_exists(self, cli_home):
+        """fetch --federation option is available."""
+        result = runner.invoke(app, ["fetch", "--help"])
+        assert result.exit_code == 0
+        assert "--federation" in result.output
+
+    def test_fetch_federation_unknown_shows_error(self, cli_home):
+        """fetch --federation for unknown federation shows error."""
+        runner.invoke(app, ["login", "--key", "aa" * 32])
+        result = runner.invoke(app, ["fetch", "--federation", "UnknownFed"])
+        assert result.exit_code != 0
+        assert "not found" in result.stdout.lower()

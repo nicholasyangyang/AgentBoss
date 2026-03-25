@@ -52,6 +52,55 @@ def parse_relay_message(raw: str) -> tuple[str, dict]:
         return "UNKNOWN", {"raw": msg}
 
 
+def _merge_events(event_lists: list[list[dict]]) -> list[dict]:
+    """Merge events from multiple relays, deduplicate by event_id.
+
+    Later duplicates (same id) override earlier ones.
+    Result sorted by created_at descending (most recent first).
+    """
+    by_id: dict[str, dict] = {}
+    for events in event_lists:
+        for event in events:
+            by_id[event["id"]] = event
+    merged = list(by_id.values())
+    merged.sort(key=lambda e: e.get("created_at", 0), reverse=True)
+    return merged
+
+
+async def fetch_events_from_relays(
+    relay_urls: list[str],
+    kinds: list[int],
+    tags: dict | None = None,
+    limit: int | None = None,
+) -> list[dict]:
+    """Parallel query to multiple relays, merge and deduplicate results.
+
+    Args:
+        relay_urls: List of relay WebSocket URLs
+        kinds: Event kinds to subscribe to
+        tags: NIP-01 filter tags
+        limit: Max events per relay (optional)
+
+    Returns:
+        Deduplicated list of events from all relays, sorted by created_at desc
+    """
+    async def fetch_from_relay(url: str) -> list[dict]:
+        relay = NostrRelay(url)
+        events = []
+        try:
+            await relay.connect()
+            await relay.subscribe("_multi", kinds, tags, limit)
+            async for event in relay.receive_events("_multi"):
+                events.append(event)
+            await relay.unsubscribe("_multi")
+        finally:
+            await relay.close()
+        return events
+
+    results = await asyncio.gather(*[fetch_from_relay(url) for url in relay_urls])
+    return _merge_events(list(results))
+
+
 class NostrRelay:
     """Single relay WebSocket connection."""
 

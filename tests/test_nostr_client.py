@@ -7,6 +7,7 @@ from cli.nostr_client import (
     build_close_message,
     parse_relay_message,
     NostrRelay,
+    _merge_events,
 )
 from shared.crypto import gen_keys, nip04_encrypt
 from shared.event import build_event
@@ -119,3 +120,30 @@ class TestSendDM:
         # Verify result
         assert result["event_id"] == "test123"
         assert result["accepted"] is True
+
+
+class TestMergeEvents:
+    def test_merge_events_deduplicates_by_id(self):
+        """_merge_events removes duplicates by event_id, later overrides earlier."""
+        events1 = [
+            {"id": "abc", "created_at": 1000, "content": "v1"},
+            {"id": "def", "created_at": 1002, "content": "v2"},
+        ]
+        events2 = [
+            {"id": "abc", "created_at": 1000, "content": "v1"},  # duplicate
+            {"id": "ghi", "created_at": 1001, "content": "v3"},
+        ]
+        result = _merge_events([events1, events2])
+        ids = [e["id"] for e in result]
+        assert set(ids) == {"abc", "def", "ghi"}
+        # Should be sorted by created_at desc
+        assert result[0]["id"] == "def"  # created_at:1002
+        assert result[1]["id"] == "ghi"  # created_at:1001
+        assert result[2]["id"] == "abc"  # created_at:1000
+
+    def test_merge_events_empty_lists(self):
+        """_merge_events handles empty input."""
+        result = _merge_events([])
+        assert result == []
+        result = _merge_events([[]])
+        assert result == []

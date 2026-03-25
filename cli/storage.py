@@ -63,6 +63,16 @@ class Storage:
             );
             CREATE INDEX IF NOT EXISTS idx_applications_job_id ON applications(job_id);
             CREATE INDEX IF NOT EXISTS idx_applications_applicant ON applications(applicant_pubkey);
+            ALTER TABLE jobs ADD COLUMN federation_id TEXT;
+            CREATE INDEX IF NOT EXISTS idx_jobs_federation ON jobs(federation_id);
+            CREATE TABLE IF NOT EXISTS federations (
+                federation_id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                relay_urls TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER DEFAULT (unixepoch('now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_federations_name ON federations(name);
         """)
         self._conn.commit()
 
@@ -387,3 +397,52 @@ class Storage:
             (job_id, applicant_pubkey),
         ).fetchone()
         return row is not None
+
+    # ── Federations ──────────────────────────────────────────────────
+
+    def upsert_federation(
+        self,
+        federation_id: str,
+        name: str,
+        relay_urls: list[str],
+        created_at: int | None = None,
+    ):
+        """Insert or update a federation."""
+        if created_at is None:
+            created_at = int(time.time())
+        relay_urls_json = json.dumps(relay_urls)
+        self._conn.execute(
+            """INSERT OR REPLACE INTO federations
+               (federation_id, name, relay_urls, created_at, updated_at)
+               VALUES (?, ?, ?, ?, unixepoch('now'))""",
+            (federation_id, name, relay_urls_json, created_at),
+        )
+        self._conn.commit()
+
+    def get_federation(self, federation_id: str) -> dict | None:
+        """Get federation by ID (npub hex)."""
+        row = self._conn.execute(
+            "SELECT * FROM federations WHERE federation_id = ?", (federation_id,)
+        ).fetchone()
+        if not row:
+            return None
+        result = dict(row)
+        result["relay_urls"] = json.loads(result["relay_urls"])
+        return result
+
+    def list_federations(self) -> list[dict]:
+        """List all joined federations."""
+        rows = self._conn.execute(
+            "SELECT * FROM federations ORDER BY created_at DESC"
+        ).fetchall()
+        results = []
+        for row in rows:
+            result = dict(row)
+            result["relay_urls"] = json.loads(result["relay_urls"])
+            results.append(result)
+        return results
+
+    def delete_federation(self, federation_id: str):
+        """Remove a federation."""
+        self._conn.execute("DELETE FROM federations WHERE federation_id = ?", (federation_id,))
+        self._conn.commit()

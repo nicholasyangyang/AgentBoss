@@ -63,8 +63,6 @@ class Storage:
             );
             CREATE INDEX IF NOT EXISTS idx_applications_job_id ON applications(job_id);
             CREATE INDEX IF NOT EXISTS idx_applications_applicant ON applications(applicant_pubkey);
-            ALTER TABLE jobs ADD COLUMN federation_id TEXT;
-            CREATE INDEX IF NOT EXISTS idx_jobs_federation ON jobs(federation_id);
             CREATE TABLE IF NOT EXISTS federations (
                 federation_id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
@@ -74,6 +72,12 @@ class Storage:
             );
             CREATE INDEX IF NOT EXISTS idx_federations_name ON federations(name);
         """)
+        # Add federation_id column idempotently (SQLite doesn't support IF NOT EXISTS for ALTER)
+        existing_cols = [col[1] for col in self._conn.execute("PRAGMA table_info(jobs)").fetchall()]
+        if "federation_id" not in existing_cols:
+            self._conn.execute("ALTER TABLE jobs ADD COLUMN federation_id TEXT")
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_federation ON jobs(federation_id)")
+        self._conn.commit()
         self._conn.commit()
 
     def close(self):

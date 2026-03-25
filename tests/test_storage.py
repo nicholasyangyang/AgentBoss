@@ -368,40 +368,6 @@ class TestApplications:
         """applications table exists after init_db."""
         assert "applications" in db.list_tables()
 
-
-class TestFederations:
-    def test_federations_table_exists(self, db):
-        """federations table exists after init_db."""
-        assert "federations" in db.list_tables()
-
-    def test_upsert_and_get_federation(self, db):
-        """Can insert and retrieve a federation."""
-        db.upsert_federation(
-            federation_id="abc123",
-            name="TechJobs",
-            relay_urls=["wss://relay1.example.com", "wss://relay2.example.com"],
-            created_at=1000,
-        )
-        fed = db.get_federation("abc123")
-        assert fed is not None
-        assert fed["name"] == "TechJobs"
-        assert fed["relay_urls"] == ["wss://relay1.example.com", "wss://relay2.example.com"]
-
-    def test_list_federations(self, db):
-        """Can list multiple federations."""
-        db.upsert_federation("id1", "Fed1", ["r1"], created_at=1000)
-        db.upsert_federation("id2", "Fed2", ["r2"], created_at=1001)
-        feds = db.list_federations()
-        assert len(feds) == 2
-        # Most recent first
-        assert feds[0]["federation_id"] == "id2"
-
-    def test_delete_federation(self, db):
-        """Can delete a federation."""
-        db.upsert_federation("id1", "Fed1", ["r1"], created_at=1000)
-        db.delete_federation("id1")
-        assert db.get_federation("id1") is None
-
     def test_upsert_application(self, db):
         """Can insert and retrieve an application."""
         db.upsert_application(
@@ -450,3 +416,37 @@ class TestFederations:
         app = db.get_application("a1")
         assert app["status"] == "accepted"
         assert app["response_message"] == "Welcome aboard!"
+
+
+class TestFederations:
+    def test_federations_table_exists(self, db):
+        """federations table exists after init_db."""
+        assert "federations" in db.list_tables()
+
+    def test_upsert_and_get_federation(self, db):
+        """Can insert and retrieve a federation."""
+        db.upsert_federation(
+            federation_id="abc123",
+            name="TechJobs",
+            relay_urls=["wss://relay1.example.com", "wss://relay2.example.com"],
+            created_at=1000,
+        )
+        fed = db.get_federation("abc123")
+        assert fed is not None
+        assert fed["name"] == "TechJobs"
+        assert fed["relay_urls"] == ["wss://relay1.example.com", "wss://relay2.example.com"]
+
+    def test_list_federations(self, db):
+        """Can list multiple federations."""
+        db.upsert_federation("id1", "Fed1", ["r1"], created_at=1000)
+        db.upsert_federation("id2", "Fed2", ["r2"], created_at=1001)
+        feds = db.list_federations()
+        assert len(feds) == 2
+        # Most recent first
+        assert feds[0]["federation_id"] == "id2"
+
+    def test_delete_federation(self, db):
+        """Can delete a federation."""
+        db.upsert_federation("id1", "Fed1", ["r1"], created_at=1000)
+        db.delete_federation("id1")
+        assert db.get_federation("id1") is None

@@ -233,3 +233,16 @@ class TestFederationLeave:
         result = runner.invoke(app, ["federation", "leave", "abc123"])
         assert result.exit_code != 0
         assert "not found" in result.stdout.lower()
+
+
+class TestFederationCreate:
+    def test_federation_create_requires_login(self, cli_home):
+        """create without identity shows error."""
+        result = runner.invoke(app, ["federation", "create", "myfed", "wss://relay.example.com"])
+        assert result.exit_code != 0
+        assert "identity" in result.stdout.lower() or "login" in result.stdout.lower()
+
+    def test_federation_create_command_exists(self, cli_home):
+        """create command is registered."""
+        result = runner.invoke(app, ["federation", "create", "--help"])
+        assert result.exit_code == 0

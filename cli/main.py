@@ -1054,3 +1054,75 @@ def federation_leave(
     storage.delete_federation(federation_id)
     typer.echo(f"Left federation '{fed['name']}'.")
     storage.close()
+
+
+@federation_app.command(name="create")
+def federation_create(
+    name: str = typer.Argument(..., help="Federation name"),
+    relays: list[str] = typer.Argument(..., help="Relay URLs (at least one)"),
+):
+    """Create a new federation and publish its metadata.
+
+    Publishes a federation metadata event (kind:31990) to all specified relays.
+    The resulting invite code can be shared with others to join this federation.
+    """
+    identity = _load_identity()
+    if not identity:
+        typer.echo("No identity. Run: agentboss login --key <nsec>")
+        raise typer.Exit(code=1)
+
+    if len(relays) < 1:
+        typer.echo("At least one relay URL is required.")
+        raise typer.Exit(code=1)
+
+    storage = _get_storage()
+    federation_id = identity["pubkey"]
+    relay_urls = relays
+
+    content = json.dumps(relay_urls)
+    event = build_event(
+        kind=KIND_FEDERATION,
+        content=content,
+        privkey=identity["privkey"],
+        pubkey=identity["pubkey"],
+        tags=[
+            ["d", name],
+            ["t", "agentboss"],
+            ["t", "federation"],
+        ],
+    )
+
+    async def _create():
+        failed = []
+        for relay_url in relay_urls:
+            relay = NostrRelay(relay_url)
+            try:
+                await relay.connect()
+                result = await relay.publish_event(event)
+                if not result["accepted"]:
+                    failed.append(f"{relay_url}: {result['message']}")
+            except Exception as e:
+                failed.append(f"{relay_url}: {e}")
+            finally:
+                await relay.close()
+
+        if failed:
+            typer.echo(f"Federation created but failed to publish to {len(failed)} relay(s):")
+            for f in failed:
+                typer.echo(f"  - {f}")
+        else:
+            typer.echo(f"Federation '{name}' created and published to {len(relay_urls)} relay(s).")
+
+        storage.upsert_federation(
+            federation_id=federation_id,
+            name=name,
+            relay_urls=relay_urls,
+            created_at=event["created_at"],
+        )
+
+        invite_code = f"federation:{federation_id}:{name}"
+        typer.echo(f"\nYour invite code: {invite_code}")
+        typer.echo("Share this code with others to join your federation.")
+
+    asyncio.run(_create())
+    storage.close()

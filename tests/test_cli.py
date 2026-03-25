@@ -182,3 +182,54 @@ class TestApplicationsRespond:
         result = runner.invoke(app, ["applications", "respond", "nonexistent", "--accept"])
         assert result.exit_code != 0
         assert "not found" in result.stdout.lower()
+
+
+class TestFederationJoin:
+    def test_federation_join_requires_login(self, cli_home):
+        """join without identity shows error."""
+        result = runner.invoke(app, ["federation", "join", "federation:abc123:myfed"])
+        assert result.exit_code != 0
+        assert "identity" in result.stdout.lower() or "login" in result.stdout.lower()
+
+    def test_federation_join_invalid_format(self, cli_home):
+        """join with malformed invite code shows error."""
+        runner.invoke(app, ["login", "--key", "aa" * 32])
+        result = runner.invoke(app, ["federation", "join", "badcode"])
+        assert result.exit_code != 0
+        assert "format" in result.stdout.lower()
+        result = runner.invoke(app, ["federation", "join", "federation:abc:myfed"])  # npub too short
+        assert result.exit_code != 0
+
+    def test_federation_join_command_exists(self, cli_home):
+        """join command is registered."""
+        result = runner.invoke(app, ["federation", "join", "--help"])
+        assert result.exit_code == 0
+        assert "federation" in result.output.lower()
+
+
+class TestFederationList:
+    def test_federation_list_requires_login(self, cli_home):
+        """list without identity shows error."""
+        result = runner.invoke(app, ["federation", "list"])
+        assert result.exit_code != 0
+
+    def test_federation_list_empty(self, cli_home):
+        """list with no federations shows empty message."""
+        runner.invoke(app, ["login", "--key", "aa" * 32])
+        result = runner.invoke(app, ["federation", "list"])
+        assert result.exit_code == 0
+        assert "no federations" in result.stdout.lower()
+
+
+class TestFederationLeave:
+    def test_federation_leave_requires_login(self, cli_home):
+        """leave without identity shows error."""
+        result = runner.invoke(app, ["federation", "leave", "abc123"])
+        assert result.exit_code != 0
+
+    def test_federation_leave_unknown_federation(self, cli_home):
+        """leave for unknown federation shows error."""
+        runner.invoke(app, ["login", "--key", "aa" * 32])
+        result = runner.invoke(app, ["federation", "leave", "abc123"])
+        assert result.exit_code != 0
+        assert "not found" in result.stdout.lower()

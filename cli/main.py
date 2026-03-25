@@ -3,13 +3,14 @@
 import json
 import os
 import asyncio
+import time
 from pathlib import Path
 from typing import Optional
 
 import typer
 
 from shared.constants import (
-    APP_TAG, JOB_TAG, REGION_TAG, KIND_APP_DATA,
+    APP_TAG, JOB_TAG, REGION_TAG, KIND_APP_DATA, KIND_FEDERATION,
     REGION_MAP_D_TAG, DEFAULT_RELAY, DEFAULT_MAX_JOBS, JOB_CONTENT_VERSION,
 )
 from shared.crypto import gen_keys, derive_pub, to_npub, nsec_to_hex, to_nsec
@@ -24,10 +25,12 @@ regions_app = typer.Typer(help="Region mapping management")
 config_app = typer.Typer(help="Configuration management")
 profile_app = typer.Typer(help="User profile management")
 applications_app = typer.Typer(help="Manage job applications")
+federation_app = typer.Typer(help="Federation management")
 app.add_typer(regions_app, name="regions")
 app.add_typer(config_app, name="config")
 app.add_typer(profile_app, name="profile")
 app.add_typer(applications_app, name="applications")
+app.add_typer(federation_app, name="federation")
 
 
 def _home() -> Path:
@@ -924,4 +927,130 @@ def applications_respond(
             await relay.close()
 
     asyncio.run(_respond())
+    storage.close()
+
+
+# ── Federations ────────────────────────────────────────────────
+
+@federation_app.command(name="join")
+def federation_join(
+    invite_code: str = typer.Argument(..., help="Federation invite code (federation:npub:name)"),
+):
+    """Join a federation by invite code.
+
+    Fetches the relay list from the federation owner's npub and stores locally.
+    """
+    identity = _load_identity()
+    if not identity:
+        typer.echo("No identity. Run: agentboss login --key <nsec>")
+        raise typer.Exit(code=1)
+
+    # Parse invite code: federation:<npub_hex>:<name>
+    if not invite_code.startswith("federation:"):
+        typer.echo("Invalid invite code format. Must start with 'federation:'")
+        raise typer.Exit(code=1)
+
+    parts = invite_code.split(":", 2)
+    if len(parts) != 3:
+        typer.echo("Invalid invite code format. Use: federation:<npub_hex>:<name>")
+        raise typer.Exit(code=1)
+    _, federation_id, federation_name = parts
+
+    # Validate npub hex (64 chars)
+    if len(federation_id) != 64 or not all(c in "0123456789abcdef" for c in federation_id.lower()):
+        typer.echo("Invalid federation npub. Must be 64 hex characters.")
+        raise typer.Exit(code=1)
+
+    storage = _get_storage()
+    relay_url = storage.get_config("relay", DEFAULT_RELAY)
+
+    async def _fetch_federation():
+        relay = NostrRelay(relay_url)
+        try:
+            await relay.connect()
+            await relay.subscribe(
+                "fed_lookup",
+                kinds=[KIND_FEDERATION],
+                tags={"authors": [federation_id], "#d": [federation_name]},
+            )
+            events = []
+            async for event in relay.receive_events("fed_lookup"):
+                events.append(event)
+            await relay.unsubscribe("fed_lookup")
+
+            if not events:
+                typer.echo(f"Federation '{federation_name}' not found for npub {federation_id[:16]}...")
+                return
+
+            latest = max(events, key=lambda e: e.get("created_at", 0))
+            try:
+                relay_urls = json.loads(latest["content"])
+            except (json.JSONDecodeError, KeyError):
+                typer.echo("Error: Invalid federation relay list in event content")
+                return
+
+            if not isinstance(relay_urls, list) or not all(isinstance(r, str) for r in relay_urls):
+                typer.echo("Error: Federation relay list must be a JSON array of relay URLs")
+                return
+
+            storage.upsert_federation(
+                federation_id=federation_id,
+                name=federation_name,
+                relay_urls=relay_urls,
+                created_at=latest.get("created_at", int(time.time())),
+            )
+            typer.echo(f"Joined federation '{federation_name}' with {len(relay_urls)} relay(s)")
+        finally:
+            await relay.close()
+
+    asyncio.run(_fetch_federation())
+    storage.close()
+
+
+@federation_app.command(name="list")
+def federation_list():
+    """List all joined federations."""
+    identity = _load_identity()
+    if not identity:
+        typer.echo("No identity. Run: agentboss login --key <nsec>")
+        raise typer.Exit(code=1)
+
+    storage = _get_storage()
+    feds = storage.list_federations()
+    if not feds:
+        typer.echo("No federations joined. Run: agentboss federation join <code>")
+        storage.close()
+        return
+
+    for fed in feds:
+        relay_count = len(fed["relay_urls"])
+        typer.echo(f"- {fed['name']} ({fed['federation_id'][:16]}...) | {relay_count} relay(s)")
+    storage.close()
+
+
+@federation_app.command(name="leave")
+def federation_leave(
+    federation_id: str = typer.Argument(..., help="Federation ID (npub hex)"),
+    confirm: bool = typer.Option(False, "--yes", help="Skip confirmation"),
+):
+    """Leave and delete a federation."""
+    identity = _load_identity()
+    if not identity:
+        typer.echo("No identity. Run: agentboss login --key <nsec>")
+        raise typer.Exit(code=1)
+
+    storage = _get_storage()
+    fed = storage.get_federation(federation_id)
+    if not fed:
+        typer.echo("Federation not found.")
+        storage.close()
+        raise typer.Exit(code=1)
+
+    if not confirm:
+        typer.echo(f"Leave federation '{fed['name']}'? Use --yes to confirm.")
+        storage.close()
+        raise typer.Exit(code=1)
+
+    storage.delete_federation(federation_id)
+    typer.echo(f"Left federation '{fed['name']}'.")
     storage.close()

@@ -110,6 +110,7 @@ def publish(
     salary: str = typer.Option("", "--salary"),
     description: str = typer.Option("", "--description"),
     contact: str = typer.Option("", "--contact"),
+    federation: Optional[str] = typer.Option(None, "--federation", help="Publish to a federation by name"),
 ):
     """Publish a job posting to the Nostr network."""
     identity = _load_identity()
@@ -156,9 +157,36 @@ def publish(
         tags=tags,
     )
 
-    relay_url = storage.get_config("relay", DEFAULT_RELAY)
-
     async def _publish():
+        if federation:
+            # Multi-relay publish to federation
+            fed = next((f for f in storage.list_federations() if f["name"] == federation), None)
+            if not fed:
+                typer.echo(f"Federation '{federation}' not found. Run: agentboss federation list")
+                raise typer.Exit(code=1)
+            relay_urls = fed["relay_urls"]
+            failed = []
+            for relay_url in relay_urls:
+                relay = NostrRelay(relay_url)
+                try:
+                    await relay.connect()
+                    result = await relay.publish_event(event)
+                    if not result["accepted"]:
+                        failed.append(f"{relay_url}: {result['message']}")
+                except Exception as e:
+                    failed.append(f"{relay_url}: {e}")
+                finally:
+                    await relay.close()
+            if failed:
+                typer.echo(f"Published to {len(relay_urls) - len(failed)}/{len(relay_urls)} federation relays. Failures:")
+                for f in failed:
+                    typer.echo(f"  - {f}")
+            else:
+                typer.echo(f"Published to all {len(relay_urls)} federation relays.")
+            return
+
+        # Single relay publish (existing behavior)
+        relay_url = storage.get_config("relay", DEFAULT_RELAY)
         relay = NostrRelay(relay_url)
         try:
             await relay.connect()

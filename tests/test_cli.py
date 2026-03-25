@@ -261,3 +261,11 @@ class TestFederationFetch:
         result = runner.invoke(app, ["fetch", "--federation", "UnknownFed"])
         assert result.exit_code != 0
         assert "not found" in result.stdout.lower()
+
+
+class TestFederationPublish:
+    def test_publish_federation_option_exists(self, cli_home):
+        """publish --federation option is available."""
+        result = runner.invoke(app, ["publish", "--help"])
+        assert result.exit_code == 0
+        assert "--federation" in result.output

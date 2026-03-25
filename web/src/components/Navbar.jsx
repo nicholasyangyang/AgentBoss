@@ -1,6 +1,7 @@
 import { useState, useRef } from 'preact/hooks';
 import { useAuth } from '../hooks/useAuth.js';
 import { LanguageSwitch } from './LanguageSwitch.jsx';
+import { ThemeToggle } from './ThemeToggle.jsx';
 import { hexToNpub } from '../lib/nostr.js';
 import { t } from '../lib/i18n.js';
 
@@ -41,6 +42,7 @@ export function Navbar({ onSearch, onPublish }) {
 
         <div class="navbar-actions">
           <LanguageSwitch />
+          <ThemeToggle />
 
           {pubkey ? (
             <span class="pubkey-badge" title={npub}>

@@ -1101,3 +1101,38 @@ a:hover { color: var(--text-accent); }
   from { opacity: 0; transform: translateX(20px); }
   to { opacity: 1; transform: translateX(0); }
 }
+
+/* ── Dark Mode ─────────────────────────── */
+.dark {
+  --bg-primary: #0f0f1a;
+  --bg-secondary: #1a1a2e;
+  --bg-tertiary: #16213e;
+  --text: #e0e0e0;
+  --text-muted: #9ca3af;
+  --accent: #f59e0b;
+  --accent-hover: #fbbf24;
+  --accent-border: rgba(245, 158, 11, 0.3);
+  --border: rgba(255, 255, 255, 0.1);
+  --surface: #1a1a2e;
+  --surface-hover: #232340;
+}
+
+/* Smooth theme transition */
+:root {
+  transition: background-color 0.3s, color 0.3s;
+}
+
+/* ── Theme Toggle ──────────────────────── */
+.theme-toggle {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 16px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  transition: background 0.2s;
+  line-height: 1;
+}
+.theme-toggle:hover {
+  background: rgba(128, 128, 128, 0.15);
+}

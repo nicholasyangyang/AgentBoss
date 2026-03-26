@@ -40,14 +40,18 @@ export function createRelayClient() {
       };
 
       ws.onmessage = (msg) => {
-        const data = JSON.parse(msg.data);
-        const [type, subId, event] = data;
+        try {
+          const data = JSON.parse(msg.data);
+          const [type, subId, event] = data;
 
-        if (type === 'EOSE' && subId === currentSubId) {
-          if (onEOSE) onEOSE();
-        }
-        if (type === 'EVENT' && subId === currentSubId && onEvent) {
-          onEvent(event);
+          if (type === 'EOSE' && subId === currentSubId) {
+            if (onEOSE) onEOSE();
+          }
+          if (type === 'EVENT' && subId === currentSubId && onEvent) {
+            onEvent(event);
+          }
+        } catch {
+          // Ignore malformed messages from relay
         }
       };
     });
@@ -55,28 +59,45 @@ export function createRelayClient() {
 
   function subscribe(subId, filter) {
     currentSubId = subId;
-    ws.send(JSON.stringify(['REQ', subId, filter]));
+    try {
+      ws.send(JSON.stringify(['REQ', subId, filter]));
+    } catch {
+      // Ignore send errors on broken socket
+    }
   }
 
   function unsubscribe(subId) {
-    ws.send(JSON.stringify(['CLOSE', subId]));
+    try {
+      ws.send(JSON.stringify(['CLOSE', subId]));
+    } catch {
+      // Ignore send errors on broken socket
+    }
     currentSubId = null;
   }
 
   function publish(event) {
     return new Promise((resolve, reject) => {
-      ws.send(JSON.stringify(['EVENT', event]));
+      try {
+        ws.send(JSON.stringify(['EVENT', event]));
+      } catch (e) {
+        reject(e);
+        return;
+      }
 
       const timeout = setTimeout(() => {
         reject(new Error('Publish timeout'));
       }, 10000);
 
       const handler = (msg) => {
-        const data = JSON.parse(msg.data);
-        if (data[0] === 'OK' && data[1] === event.id) {
-          clearTimeout(timeout);
-          ws.removeEventListener('message', handler);
-          resolve({ accepted: data[2], message: data[3] });
+        try {
+          const data = JSON.parse(msg.data);
+          if (data[0] === 'OK' && data[1] === event.id) {
+            clearTimeout(timeout);
+            ws.removeEventListener('message', handler);
+            resolve({ accepted: data[2], message: data[3] });
+          }
+        } catch {
+          // Ignore malformed messages from relay
         }
       };
 
